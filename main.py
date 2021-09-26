@@ -17,7 +17,7 @@ from mido import Message
 
 TimelineEntry = namedtuple("TimelineEntry", "start stop note velocity")
 Event = namedtuple("Event", "type time note velocity")
-TestSetEntry = namedtuple("TestSetEntry", "filename velocity_threshold min_duration max_note min_note min_amplitude_db")
+TestSetEntry = namedtuple("TestSetEntry", "filename velocity_threshold min_duration max_note min_note min_amplitude_db transposition")
 
 
 def round_half_up(n, decimals=0):
@@ -77,30 +77,47 @@ def remove_short_events(timeline, min_time):
     return result
 
 
+def print_stats(midinotes):
+    #h = np.histogram(midinotes, 128, (0, 127))
+    #print(h[0])
+    pass
+
 def main():
     test_sets = {
+        # entry 0 is the worst :)
         0: TestSetEntry(filename='inputs/hello-long-filtered.wav',
                         min_note=0,
                         max_note=100,
-                        min_amplitude_db=-90,
-                        velocity_threshold=100,
+                        transposition=0,
+                        min_amplitude_db=-180,
+                        velocity_threshold=101,
                         min_duration=0.02),
         1: TestSetEntry(filename='inputs/scared.wav',
                         min_note=0,
                         max_note=127,
-                        min_amplitude_db=-100,
+                        transposition=0,
+                        min_amplitude_db=-153,
                         velocity_threshold=100,
                         min_duration=0.02),
         2: TestSetEntry(filename="inputs/peace.wav",
                         min_note=0,
                         max_note=127,
-                        min_amplitude_db=-100,
-                        velocity_threshold=98,
+                        transposition=0,
+                        min_amplitude_db=-160,
+                        velocity_threshold=93,
                         min_duration=0.02),
         3: TestSetEntry(filename="inputs/ohmy.wav",
                         min_note=0,
                         max_note=127,
-                        min_amplitude_db=-60,
+                        transposition=0,
+                        min_amplitude_db=-140,
+                        velocity_threshold=100,
+                        min_duration=0.02),
+        4: TestSetEntry(filename="inputs/greatestshow.wav",
+                        min_note=0,
+                        max_note=127,
+                        transposition=-3,
+                        min_amplitude_db=-190,
                         velocity_threshold=100,
                         min_duration=0.02),
     }
@@ -124,15 +141,16 @@ def main():
         max_amp = -1e10
         min_amp = 1e10
         for m in hmag:
-            relevant_amps = [el for el in m if el != -100]
+            relevant_amps = [el for el in m if el > test_sets[test_id].min_amplitude_db]
             max_amp = max([max_amp, max(relevant_amps)])
             min_amp = min([min_amp, min(relevant_amps)])
         print(f"{max_amp = }, {min_amp = }")
 
         for f, m in zip(hfreq, hmag):
-            midinotes = [int(round_half_up(cpsmidi(freq))) if freq > 0 else 0 for freq in f]
+            midinotes = [int(round_half_up(cpsmidi(freq))) + test_sets[test_id].transposition if freq > 0 else 0 for freq in f]
             midinotes_filtered = [e if test_sets[test_id].min_note <= e <= test_sets[test_id].max_note else 0 for e in
                                   midinotes]
+            print_stats(midinotes_filtered)
             amps = [el if el >= test_sets[test_id].min_amplitude_db else min_amp for el in m]
             mapped_amps = [Mapping.linlin(a, min_amp, max_amp, 0, 127) for a in amps]
             rescaled_amps = [int(round_half_up(el)) for el in mapped_amps]
