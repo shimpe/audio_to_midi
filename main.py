@@ -1,16 +1,17 @@
+import random
+
 import mido
 from scipy.io import wavfile
 import sys
 import math
 import pathlib
 import time
-from sms_tools.software.models import harmonicModel
 from sms_tools.software.models import stft
 from scipy.signal import get_window
-import numpy as np
 from collections import namedtuple, defaultdict
 from statistics import mean, median
 from mapping import Mapping
+import random
 
 from midiutil.MidiFile import MIDIFile
 from mido import Message
@@ -30,8 +31,8 @@ test_sets = {
                     velocity_threshold=101,
                     min_duration=0.02),
     1: TestSetEntry(filename='inputs/scared.wav',  # i don't wanna go, i'm scared
-                    min_note=0,
-                    max_note=127,
+                    min_note=30,
+                    max_note=120,
                     transposition=0,
                     min_amplitude_db=-153,
                     velocity_threshold=100,
@@ -59,8 +60,22 @@ test_sets = {
                     min_amplitude_db=-190,
                     velocity_threshold=100,
                     min_duration=0.02),
+    5: TestSetEntry(filename="inputs/scale.wav",
+                    min_note=0,
+                    max_note=127,
+                    transposition=0,
+                    min_amplitude_db=-120,
+                    velocity_threshold=90,
+                    min_duration=0.02),
+    6: TestSetEntry(filename="inputs/thankyou.wav",
+                    min_note=0,
+                    max_note=127,
+                    transposition=0,
+                    min_amplitude_db=-110,
+                    velocity_threshold=89,
+                    min_duration=0.02),
 }
-test_id = 1
+test_id = 6
 
 
 def round_half_up(n, decimals=0):
@@ -178,7 +193,7 @@ def convert_freq_mag_to_event_list(duration, hfreq, hmag):
         timeline = distill_timeline(time_step, score, test_sets[test_id].velocity_threshold)
         filtered_timeline = remove_short_events(timeline, test_sets[test_id].min_duration)
         event_list = distill_event_list(filtered_timeline)
-        return event_list
+        return event_list, filtered_timeline
 
     return []
 
@@ -202,6 +217,31 @@ def perform_event_list(event_list):
             outport.reset()
 
 
+def time_to_ticks(elapsed_time, resolution, tempo,):
+    return int(resolution * (1 / tempo) * 1000 * elapsed_time)
+
+
+def save_timeline(filtered_timeline, fullfilename):
+    resolution = 960
+    tempo = 120
+    if filtered_timeline:
+        m = MIDIFile(numTracks=1,
+                     removeDuplicates=False,
+                     deinterleave=False,
+                     adjust_origin=True,
+                     file_format=1,
+                     ticks_per_quarternote=resolution,
+                     eventtime_is_ticks=True)
+        m.addTempo(0, 0, 120)
+        m.addTrackName(0, 0, "speech")
+        for event in filtered_timeline:
+            m.addNote(0, 0, event.note, time_to_ticks(event.start, resolution, tempo),
+                      time_to_ticks(event.stop-event.start, resolution, tempo),
+                      event.velocity, None)
+        with open(fullfilename, 'wb') as output_file:
+            m.writeFile(output_file)
+
+
 def main():
     own_path = pathlib.Path(sys.argv[0]).parent
     fs, audio = wavfile.read(own_path.joinpath(test_sets[test_id].filename))
@@ -212,8 +252,9 @@ def main():
         mono = audio.sum(axis=1) / audio.shape[1] / (2 ** 15)
 
     hfreq, hmag, hphase = analyse_audio_stft(fs, mono, own_path)
-    event_list = convert_freq_mag_to_event_list(audio.shape[0] / fs, hfreq, hmag)
+    event_list, timeline = convert_freq_mag_to_event_list(audio.shape[0] / fs, hfreq, hmag)
     perform_event_list(event_list)
+    #save_timeline(timeline, own_path.joinpath("outputs/result.midi"))
 
 
 if __name__ == '__main__':
