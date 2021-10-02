@@ -5,16 +5,14 @@ from scipy.io import wavfile
 import sys
 import math
 import pathlib
-import time
 from sms_tools.software.models import stft
 from scipy.signal import get_window
 from collections import namedtuple, defaultdict
 from statistics import mean, median
 from mapping import Mapping
-import random
-
-from midiutil.MidiFile import MIDIFile
+from jack_player import JackPlayer
 from mido import Message
+import time
 
 TimelineEntry = namedtuple("TimelineEntry", "start stop note velocity")
 Event = namedtuple("Event", "type time note velocity")
@@ -74,8 +72,15 @@ test_sets = {
                     min_amplitude_db=-110,
                     velocity_threshold=89,
                     min_duration=0.02),
+    7: TestSetEntry(filename="inputs/rustigmaar.wav",
+                    min_note=30,
+                    max_note=120,
+                    transposition=0,
+                    min_amplitude_db=-190,
+                    velocity_threshold=95,
+                    min_duration=0.02)
 }
-test_id = 6
+test_id = 7
 
 
 def round_half_up(n, decimals=0):
@@ -124,6 +129,7 @@ def distill_event_list(timeline):
         event_list.append(Event(type='note_on', time=event.start, note=event.note, velocity=event.velocity))
         event_list.append(Event(type='note_off', time=event.stop, note=event.note, velocity=0))
     event_list.sort(key=lambda el: el.time)
+    print(event_list[-1])
     return event_list
 
 
@@ -198,48 +204,35 @@ def convert_freq_mag_to_event_list(duration, hfreq, hmag):
     return []
 
 
-def perform_event_list(event_list):
+def perform_event_list(event_list, use_direct_hardware_connection=True):
     if event_list:
-        outport = mido.open_output('INTEGRA-7:INTEGRA-7 MIDI 1 28:0')
+        if use_direct_hardware_connection:
+            outport = mido.open_output('INTEGRA-7:INTEGRA-7 MIDI 1 28:0')
 
-        for i in range(100):
-            previous_time = 0
-            for event in event_list:
-                new_time = event.time
-                if new_time == previous_time:
-                    outport.send(Message(event.type, channel=0, note=event.note, velocity=event.velocity))
-                else:
-                    delta = new_time - previous_time
-                    previous_time = new_time
-                    time.sleep(delta)
+            for i in range(100):
+                previous_time = 0
+                for event in event_list:
+                    new_time = event.time
+                    if new_time == previous_time:
+                        outport.send(Message(event.type, channel=0, note=event.note, velocity=event.velocity))
+                    else:
+                        delta = new_time - previous_time
+                        previous_time = new_time
+                        time.sleep(delta)
 
-            time.sleep(1.0)
-            outport.reset()
-
+                time.sleep(1.0)
+                outport.reset()
+        else:
+            new_event_list = event_list[:]
+            # add an extra nop event to prevent last notes from keeping playing
+            extra_time = event_list[-1].time + test_sets[test_id].min_duration
+            new_event_list.append(Event(type='nop', time=extra_time, note=0, velocity=0))
+            j = JackPlayer(new_event_list, 'ardour:MIDI 1/midi_in 1')
+            j.wait_until_finished()
+            j.close()
 
 def time_to_ticks(elapsed_time, resolution, tempo,):
     return int(resolution * (1 / tempo) * 1000 * elapsed_time)
-
-
-def save_timeline(filtered_timeline, fullfilename):
-    resolution = 960
-    tempo = 120
-    if filtered_timeline:
-        m = MIDIFile(numTracks=1,
-                     removeDuplicates=False,
-                     deinterleave=False,
-                     adjust_origin=True,
-                     file_format=1,
-                     ticks_per_quarternote=resolution,
-                     eventtime_is_ticks=True)
-        m.addTempo(0, 0, 120)
-        m.addTrackName(0, 0, "speech")
-        for event in filtered_timeline:
-            m.addNote(0, 0, event.note, time_to_ticks(event.start, resolution, tempo),
-                      time_to_ticks(event.stop-event.start, resolution, tempo),
-                      event.velocity, None)
-        with open(fullfilename, 'wb') as output_file:
-            m.writeFile(output_file)
 
 
 def main():
@@ -253,8 +246,7 @@ def main():
 
     hfreq, hmag, hphase = analyse_audio_stft(fs, mono, own_path)
     event_list, timeline = convert_freq_mag_to_event_list(audio.shape[0] / fs, hfreq, hmag)
-    perform_event_list(event_list)
-    #save_timeline(timeline, own_path.joinpath("outputs/result.midi"))
+    perform_event_list(event_list, use_direct_hardware_connection=True)
 
 
 if __name__ == '__main__':
