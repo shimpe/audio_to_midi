@@ -32,7 +32,6 @@ class JackPlayer:
 
     def process(self, frames):
         self.outport.clear_buffer()
-        channel = 0
         previous_time = self.msg.time
         while True:
             if self.offset >= frames:
@@ -41,7 +40,8 @@ class JackPlayer:
             # Note: This may raise an exception:
             if self.msg.type != 'nop':
                 status = NOTEON if self.msg.type == 'note_on' and self.msg.velocity > 0 else NOTEOFF
-                self.outport.write_midi_event(self.offset, [status + channel, self.msg.note, self.msg.velocity])
+                #print(self.msg.type)
+                self.outport.write_midi_event(self.offset, [status + self.msg.channel, self.msg.note, self.msg.velocity])
             try:
                 self.msg = next(self.event_list)
             except StopIteration:

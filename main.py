@@ -13,9 +13,11 @@ from mapping import Mapping
 from jack_player import JackPlayer
 from mido import Message
 import time
+from datetime import datetime
+import itertools
 
-TimelineEntry = namedtuple("TimelineEntry", "start stop note velocity")
-Event = namedtuple("Event", "type time note velocity")
+TimelineEntry = namedtuple("TimelineEntry", "start stop channel note velocity")
+Event = namedtuple("Event", "type channel time note velocity")
 TestSetEntry = namedtuple("TestSetEntry",
                           "filename velocity_threshold min_duration max_note min_note min_amplitude_db transposition")
 
@@ -86,42 +88,49 @@ test_sets = {
                     min_amplitude_db=-170,
                     velocity_threshold=105,
                     min_duration=0.02),
-    9: TestSetEntry(filename="inputs/musicspeakslinde2b.wav",
-                    min_note=30,
+    9: TestSetEntry(filename="inputs/musicspeakslinde1c.wav",
+                    min_note=50,
                     max_note=120,
                     transposition=0,
-                    min_amplitude_db=-190,
-                    velocity_threshold=95,
+                    min_amplitude_db=-160,
+                    velocity_threshold=90,
                     min_duration=0.02),
-    10: TestSetEntry(filename="inputs/musicspeakslinde3b.wav",
+    10: TestSetEntry(filename="inputs/musicspeakslinde2b.wav",
+                     min_note=30,
+                     max_note=117,
+                     transposition=0,
+                     min_amplitude_db=-160,
+                     velocity_threshold=93,
+                     min_duration=0.02),
+    11: TestSetEntry(filename="inputs/musicspeakslinde3b.wav",
                      min_note=30,
                      max_note=120,
                      transposition=0,
                      min_amplitude_db=-190,
                      velocity_threshold=95,
                      min_duration=0.02),
-    11: TestSetEntry(filename="inputs/musicspeakskatrien1.wav",
+    12: TestSetEntry(filename="inputs/musicspeakskatrien1.wav",
                      min_note=30,
                      max_note=120,
                      transposition=0,
                      min_amplitude_db=-190,
                      velocity_threshold=95,
                      min_duration=0.02),
-    12: TestSetEntry(filename="inputs/musicspeakskatrien2.wav",
+    13: TestSetEntry(filename="inputs/musicspeakskatrien2.wav",
                      min_note=30,
                      max_note=120,
                      transposition=0,
                      min_amplitude_db=-160,
                      velocity_threshold=95,
                      min_duration=0.02),
-    13: TestSetEntry(filename="inputs/poesjemauw.wav",
+    14: TestSetEntry(filename="inputs/poesjemauw.wav",
                      min_note=0,
                      max_note=105,
                      transposition=0,
                      min_amplitude_db=-185,
                      velocity_threshold=100,
                      min_duration=0.02),
-    14: TestSetEntry(filename="inputs/doremifasol.wav",
+    15: TestSetEntry(filename="inputs/doremifasol.wav",
                      min_note=0,
                      max_note=105,
                      transposition=0,
@@ -129,8 +138,6 @@ test_sets = {
                      velocity_threshold=100,
                      min_duration=0.02),
 }
-test_id = 1
-
 
 def round_half_up(n, decimals=0):
     multiplier = 10 ** decimals
@@ -154,6 +161,7 @@ def distill_timeline(time_step, score, vel_threshold):
             note = event[0]
             if note > 0:
                 vel = event[1]
+                channel = event[2]
                 stop = vel < vel_threshold
                 go = not stop
                 if go:
@@ -162,6 +170,7 @@ def distill_timeline(time_step, score, vel_threshold):
                     if note in freq_tracker.keys():
                         timeline.append(TimelineEntry(start=freq_tracker[note][0][0],
                                                       stop=freq_tracker[note][-1][0] + time_step,
+                                                      channel=channel,
                                                       note=note,
                                                       velocity=int(
                                                           round_half_up(mean([el[1] for el in freq_tracker[note]])))))
@@ -175,10 +184,9 @@ def distill_timeline(time_step, score, vel_threshold):
 def distill_event_list(timeline):
     event_list = []
     for event in timeline:
-        event_list.append(Event(type='note_on', time=event.start, note=event.note, velocity=event.velocity))
-        event_list.append(Event(type='note_off', time=event.stop, note=event.note, velocity=0))
+        event_list.append(Event(type='note_on', channel=event.channel, time=event.start, note=event.note, velocity=event.velocity))
+        event_list.append(Event(type='note_off', channel=event.channel, time=event.stop, note=event.note, velocity=0))
     event_list.sort(key=lambda el: el.time)
-    print(event_list[-1])
     return event_list
 
 
@@ -218,9 +226,7 @@ def analyse_audio_stft(fs, mono, own_path):
     return hfreq, hmag, hphase
 
 
-def convert_freq_mag_to_event_list(duration, hfreq, hmag):
-    global test_sets
-    global test_id
+def convert_freq_mag_to_event_list(test_sets, test_id, channel, duration, hfreq, hmag):
     if len(hfreq) > 0:
         score = []
         no_of_lines = len(hfreq)
@@ -243,7 +249,7 @@ def convert_freq_mag_to_event_list(duration, hfreq, hmag):
             mapped_amps = [Mapping.linlin(a, min_amp, max_amp, 0, 127) for a in amps]
             rescaled_amps = [int(round_half_up(el)) for el in mapped_amps]
             score.append(
-                [(note, amp) for note, amp in zip(midinotes_filtered, rescaled_amps) if note != 0 and amp != 0])
+                [(note, amp, channel) for note, amp in zip(midinotes_filtered, rescaled_amps) if note != 0 and amp != 0])
 
         timeline = distill_timeline(time_step, score, test_sets[test_id].velocity_threshold)
         filtered_timeline = remove_short_events(timeline, test_sets[test_id].min_duration)
@@ -257,25 +263,27 @@ def perform_event_list(event_list, use_direct_hardware_connection=True):
     if event_list:
         if use_direct_hardware_connection:
             outport = mido.open_output('INTEGRA-7:INTEGRA-7 MIDI 1 28:0')
+            previous_time = 0
+            for event in event_list:
+                new_time = event.time
+                if new_time == previous_time:
+                    print(event.type, event.channel)
+                    outport.send(Message(event.type, channel=event.channel, note=event.note, velocity=event.velocity))
+                else:
+                    delta = new_time - previous_time
+                    #print(f"{new_time=}, {previous_time=}, {delta=}")
+                    previous_time = new_time
+                    time.sleep(delta)
+                    print(event.type, event.channel)
+                    outport.send(Message(event.type, channel=event.channel, note=event.note, velocity=event.velocity))
 
-            for i in range(100):
-                previous_time = 0
-                for event in event_list:
-                    new_time = event.time
-                    if new_time == previous_time:
-                        outport.send(Message(event.type, channel=0, note=event.note, velocity=event.velocity))
-                    else:
-                        delta = new_time - previous_time
-                        previous_time = new_time
-                        time.sleep(delta)
-
-                time.sleep(1.0)
-                outport.reset()
+            time.sleep(1.0)
+            outport.reset()
         else:
             new_event_list = event_list[:]
             # add an extra nop event to prevent last notes from keeping playing
-            extra_time = event_list[-1].time + test_sets[test_id].min_duration
-            new_event_list.append(Event(type='nop', time=extra_time, note=0, velocity=0))
+            extra_time = event_list[-1].time + 0.02
+            new_event_list.append(Event(type='nop', channel=event_list[-1].channel, time=extra_time, note=0, velocity=0))
             j = JackPlayer(new_event_list, 'ardour:MIDI 1/midi_in 1')
             j.wait_until_finished()
             j.close()
@@ -284,19 +292,81 @@ def time_to_ticks(elapsed_time, resolution, tempo,):
     return int(resolution * (1 / tempo) * 1000 * elapsed_time)
 
 
+def apply_time_dilation(event_list, fixed_offset, time_dilation_factor):
+    result = []
+    event_list_copy = event_list[:]
+    for event in event_list_copy:
+        result.append(Event(type=event.type,
+                            channel=event.channel,
+                            time=fixed_offset + event.time*time_dilation_factor,
+                            note=event.note,
+                            velocity=event.velocity))
+    return result
+
 def main():
     own_path = pathlib.Path(sys.argv[0]).parent
-    fs, audio = wavfile.read(own_path.joinpath(test_sets[test_id].filename))
+    test_ids = [3, 1]
 
-    if audio.ndim == 1:
-        mono = audio / (2 ** 15)
-    else:
-        mono = audio.sum(axis=1) / audio.shape[1] / (2 ** 15)
+    mono_per_test_id = {}
+    hfreq_per_test_id = {}
+    hmag_per_test_id = {}
+    ideal_min_amp_per_test_id = {}
+    ideal_velocity_threshold_per_test_id = {}
+    event_list = []
+    for test_id in test_ids:
+        fs, audio = wavfile.read(own_path.joinpath(test_sets[test_id].filename))
+        if audio.ndim == 1:
+            mono = audio / (2 ** 15)
+        else:
+            mono = audio.sum(axis=1) / audio.shape[1] / (2 ** 15)
+        mono_per_test_id[test_id] = mono[:]
+        hfreq_per_test_id[test_id], hmag_per_test_id[test_id], hphase = analyse_audio_stft(fs, mono_per_test_id[test_id], own_path)
+        ideal_min_amp_per_test_id[test_id] = test_sets[test_id].min_amplitude_db
+        ideal_velocity_threshold_per_test_id[test_id] = test_sets[test_id].velocity_threshold
 
-    hfreq, hmag, hphase = analyse_audio_stft(fs, mono, own_path)
-    event_list, timeline = convert_freq_mag_to_event_list(audio.shape[0] / fs, hfreq, hmag)
-    perform_event_list(event_list, use_direct_hardware_connection=True)
+    ideal_time_dilation_factor = 1
+    steps = 20
+    repeats = 2
+    event_list_per_test_id = {}
+    timeline_per_test_id = {}
+    fixed_offset = 0
+    itersteps = itertools.chain(range(steps), itertools.repeat(19, 2))
+    for index, i in enumerate(itersteps):
+        for repeat in range(repeats):
+            time_dilation_factor = Mapping.linexp(i * repeats + repeat, 0, steps * repeats - 1, 4,
+                                                  ideal_time_dilation_factor)
 
+            print(f"{time_dilation_factor = }")
+            for channel, test_id in enumerate(test_ids):
+                if repeat == 0:
+                    test_sets[test_id] = test_sets[test_id]._replace(min_amplitude_db = Mapping.linlin(i, 0, steps-1,
+                                                                                                       ideal_min_amp_per_test_id[test_id]/2,
+                                                                                                       ideal_min_amp_per_test_id[test_id]))
+                    test_sets[test_id] = test_sets[test_id]._replace(velocity_threshold = Mapping.linlin(i, 0, steps-1, 120,
+                                                                                                         ideal_velocity_threshold_per_test_id[test_id]))
+                    event_list_per_test_id[test_id], timeline_per_test_id[test_id] = convert_freq_mag_to_event_list(test_sets, test_id,
+                                                                                                                    channel,
+                                                                                                                    mono_per_test_id[test_id].shape[0] / fs,
+                                                                                                                    hfreq_per_test_id[test_id],
+                                                                                                                    hmag_per_test_id[test_id])
+
+                event_list.extend(apply_time_dilation(event_list_per_test_id[test_id], fixed_offset, time_dilation_factor))
+                fixed_offset = event_list[-1].time + 0.02
+                print(f"{fixed_offset=}")
+
+        fixed_offset += Mapping.linlin(index, 0, steps + 2, 3.0, 1.0) # sleep
+
+    start_time = datetime.now()
+
+
+    input("Start recording then press enter to continue.")
+
+    perform_event_list(event_list=event_list,
+                       use_direct_hardware_connection=True)
+    end_time = datetime.now()
+
+    diff = end_time - start_time
+    print(f"Duration: {diff = }")
 
 if __name__ == '__main__':
     main()
