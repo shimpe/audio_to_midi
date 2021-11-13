@@ -40,7 +40,7 @@ class Mapping(object):
         if in_min == in_max:
             if value == in_min and out_min == out_max:
                 return out_min
-            return None
+            return out_max
 
         output = ((out_min + out_max) + (out_max - out_min) * (
                 (2 * value - (in_min + in_max)) / float(in_max - in_min))) / 2.0
@@ -67,7 +67,7 @@ class Mapping(object):
         if in_min == in_max:
             if value == in_min and out_min == out_max:
                 return out_min
-            return None
+            return out_max
 
         output = math.pow(out_max / out_min, (value - in_min) / (in_max - in_min)) * out_min
         if clip:
