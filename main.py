@@ -136,7 +136,7 @@ test_sets = {
                      transposition=0,
                      min_amplitude_db=-185,
                      velocity_threshold=100,
-                     min_duration=0.02),
+                     min_duration=0.02)
 }
 
 def round_half_up(n, decimals=0):
@@ -222,7 +222,7 @@ def analyse_audio_stft(fs, mono, own_path):
     hmag, hphase = stft.stftAnal(x=mono, w=w, N=fft_size, H=hop_size)
     spacing = fs / fft_size
     hfreq = [[i * spacing for i in range(fft_size // 2)] for _ in range(len(hmag))]
-    print(f"frequency bin spacing = {spacing} Hz")
+    #print(f"frequency bin spacing = {spacing} Hz")
     return hfreq, hmag, hphase
 
 
@@ -237,7 +237,7 @@ def convert_freq_mag_to_event_list(test_sets, test_id, channel, duration, hfreq,
             relevant_amps = [el for el in m if el > test_sets[test_id].min_amplitude_db]
             max_amp = max([max_amp, max(relevant_amps)])
             min_amp = min([min_amp, min(relevant_amps)])
-        print(f"{max_amp = }, {min_amp = }")
+        #print(f"{max_amp = }, {min_amp = }")
 
         for f, m in zip(hfreq, hmag):
             midinotes = [int(round_half_up(cpsmidi(freq))) + test_sets[test_id].transposition if freq > 0 else 0 for
@@ -267,14 +267,14 @@ def perform_event_list(event_list, use_direct_hardware_connection=True):
             for event in event_list:
                 new_time = event.time
                 if new_time == previous_time:
-                    print(event.type, event.channel)
+                    #print(event.type, event.channel)
                     outport.send(Message(event.type, channel=event.channel, note=event.note, velocity=event.velocity))
                 else:
                     delta = new_time - previous_time
                     #print(f"{new_time=}, {previous_time=}, {delta=}")
                     previous_time = new_time
                     time.sleep(delta)
-                    print(event.type, event.channel)
+                    #print(event.type, event.channel)
                     outport.send(Message(event.type, channel=event.channel, note=event.note, velocity=event.velocity))
 
             time.sleep(1.0)
@@ -330,13 +330,14 @@ def main():
     event_list_per_test_id = {}
     timeline_per_test_id = {}
     fixed_offset = 0
+    all_offsets = [fixed_offset]
     itersteps = itertools.chain(range(steps), itertools.repeat(19, 2))
     for index, i in enumerate(itersteps):
         for repeat in range(repeats):
             time_dilation_factor = Mapping.linexp(i * repeats + repeat, 0, steps * repeats - 1, 4,
                                                   ideal_time_dilation_factor)
 
-            print(f"{time_dilation_factor = }")
+            #print(f"{time_dilation_factor = }")
             for channel, test_id in enumerate(test_ids):
                 if repeat == 0:
                     test_sets[test_id] = test_sets[test_id]._replace(min_amplitude_db = Mapping.linlin(i, 0, steps-1,
@@ -352,13 +353,17 @@ def main():
 
                 event_list.extend(apply_time_dilation(event_list_per_test_id[test_id], fixed_offset, time_dilation_factor))
                 fixed_offset = event_list[-1].time + 0.02
-                print(f"{fixed_offset=}")
+                all_offsets.append(fixed_offset)
+                print(".", end="")
 
         fixed_offset += Mapping.linlin(index, 0, steps + 2, 3.0, 1.0) # sleep
 
     start_time = datetime.now()
 
+    with open(own_path.joinpath("outputs", "offsets.txt"), "w") as f:
+        f.write(",".join([f"{el}" for el in all_offsets]))
 
+    print(".")
     input("Start recording then press enter to continue.")
 
     perform_event_list(event_list=event_list,
@@ -366,7 +371,7 @@ def main():
     end_time = datetime.now()
 
     diff = end_time - start_time
-    print(f"Duration: {diff = }")
+    print(f"Total duration: {diff = }")
 
 if __name__ == '__main__':
     main()
